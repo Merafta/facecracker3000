@@ -1,14 +1,24 @@
-# Python cache
+# Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 
+# Environment
+.env
+venv/
+env/
+
+# Uploads and generated content
+uploads/
+static/processed/
+static/thumbnails/
+
 # OS-specific files
 .DS_Store
 Thumbs.db
 
-# IDE-specific files
+# IDE settings
 .vscode/
 .idea/
 
