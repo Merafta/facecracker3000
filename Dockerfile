@@ -7,16 +7,10 @@ WORKDIR /app
 # Copy the requirements file into the container at /app
 COPY requirements.txt .
 
-# Install system dependencies needed to build 'dlib'
-RUN apt-get update && apt-get install -y --no-install-recommends build-essential cmake
+# No need to install cmake anymore as deepface doesn't need it.
+# RUN apt-get update && apt-get install -y --no-install-recommends build-essential cmake
 
-# Install the big, compiled libraries first to manage memory.
-# We install dlib and then face-recognition which depends on it.
-RUN pip install --no-cache-dir dlib
-RUN pip install --no-cache-dir face-recognition
-
-# Now install the rest of the packages from the requirements file.
-# pip will see that face-recognition is already installed and will skip it.
+# Install the python packages from requirements.txt in one go
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the rest of the application's code into the container

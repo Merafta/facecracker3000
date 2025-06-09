@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Processing Faces...</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background-color: #f8f9fa; margin: 0; }
+        .container { text-align: center; padding: 40px; background-color: #fff; border-radius: 8px; box-shadow: 0 4px 8px rgba(0,0,0,0.05); }
+        h1 { color: #343a40; }
+        .progress-bar-container { width: 80%; max-width: 500px; background-color: #e9ecef; border-radius: 5px; margin: 20px auto; }
+        .progress-bar { width: 0%; height: 20px; background-color: #007bff; border-radius: 5px; text-align: center; line-height: 20px; color: white; transition: width 0.4s ease; }
+        #progress-message { color: #6c757d; margin-top: 10px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Processing your photos...</h1>
+        <p>This may take a few minutes. Please don't close this window.</p>
+        <div class="progress-bar-container">
+            <div id="progress-bar" class="progress-bar">0%</div>
+        </div>
+        <p id="progress-message">Initializing...</p>
+    </div>
+
+    <script>
+        document.addEventListener("DOMContentLoaded", function() {
+            const progressBar = document.getElementById('progress-bar');
+            const progressMessage = document.getElementById('progress-message');
+            
+            const eventSource = new EventSource("/stream");
+
+            eventSource.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+
+                if (data.error) {
+                    progressMessage.textContent = `Error: ${data.message}`;
+                    progressMessage.style.color = 'red';
+                    eventSource.close();
+                    return;
+                }
+
+                if (data.progress) {
+                    progressBar.style.width = data.progress + '%';
+                    progressBar.textContent = data.progress + '%';
+                }
+                
+                if (data.message) {
+                    progressMessage.textContent = data.message;
+                }
+
+                if (data.finished) {
+                    progressMessage.textContent = "Processing complete! Redirecting...";
+                    eventSource.close();
+                    // Redirect back to the main page to see the results
+                    window.location.href = "/";
+                }
+            };
+
+            eventSource.onerror = function(err) {
+                progressMessage.textContent = "Connection to server lost. Please try again.";
+                progressMessage.style.color = 'red';
+                console.error("EventSource failed:", err);
+                eventSource.close();
+            };
+        });
+    </script>
+</body>
+</html> 

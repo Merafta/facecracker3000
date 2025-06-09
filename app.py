@@ -1,37 +1,38 @@
 import os
 import glob
-import face_recognition
+from deepface import DeepFace
 import numpy as np
 from sklearn.cluster import DBSCAN
 from collections import defaultdict
 from PIL import Image, ImageDraw
-from flask import Flask, render_template, url_for, send_from_directory, request, redirect, flash, Response, jsonify
+from flask import Flask, render_template, url_for, send_from_directory, request, redirect, flash, Response, jsonify, session
 import zipfile
 import shutil
 import time
 import logging
 
 # --- App Constants ---
-FACE_DETECTION_MODEL = "hog" # "hog" or "cnn"
+# We no longer need this as the model is specified in the DeepFace call
+# FACE_DETECTION_MODEL = "hog" 
 
 # --- Flask App Setup ---
 app = Flask(__name__)
 app.logger.setLevel(logging.DEBUG)
 # Add a secret key for flashing messages
-app.secret_key = 'supersecretkey' # In production, this should be a real secret
-# Configuration for folders
+app.secret_key = 'a-super-secret-key-that-you-should-change'
+
+# THE FIX (1/2): Consolidate and clarify folder configuration
 app.config['UPLOAD_FOLDER'] = 'uploads'
-app.config['OUTPUT_FOLDER'] = 'output_images_with_boxes'
-app.config['INPUT_FOLDER'] = 'input_images'
-app.config['FACE_THUMBNAILS_FOLDER'] = 'face_thumbnails' # New config
+app.config['PROCESSED_FOLDER'] = 'static/processed'
+app.config['THUMBNAIL_FOLDER'] = 'static/thumbnails'
+app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500 MB
 
 # Global variable to store processed results to avoid reprocessing on every request (for POC)
-processed_data_for_web = None
+processed_data_for_web = {}
 # Ensure all directories exist
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-os.makedirs(app.config['OUTPUT_FOLDER'], exist_ok=True)
-os.makedirs(app.config['INPUT_FOLDER'], exist_ok=True)
-os.makedirs(app.config['FACE_THUMBNAILS_FOLDER'], exist_ok=True) # New directory creation
+os.makedirs(app.config['PROCESSED_FOLDER'], exist_ok=True)
+os.makedirs(app.config['THUMBNAIL_FOLDER'], exist_ok=True)
 
 @app.before_request
 def log_request_info():
@@ -39,63 +40,41 @@ def log_request_info():
     # This will print to the terminal for every request the server receives.
     print(f"--- [DEBUG] Incoming Request: {request.method} {request.path} ---")
 
-# --- New Helper Function to Clear Data ---
 def clear_all_data():
-    """Clears previously uploaded and processed files."""
+    """Clears all generated files and resets the global data cache."""
     global processed_data_for_web
-    processed_data_for_web = None # Reset the cache
-
-    print("Clearing previous data...")
-    for folder_key in ['INPUT_FOLDER', 'OUTPUT_FOLDER', 'UPLOAD_FOLDER', 'FACE_THUMBNAILS_FOLDER']: # Add new folder to cleanup
-        folder_path = app.config[folder_key]
-        if os.path.isdir(folder_path):
-            for filename in os.listdir(folder_path):
-                file_path = os.path.join(folder_path, filename)
-                try:
-                    if os.path.isfile(file_path) or os.path.islink(file_path):
-                        os.unlink(file_path)
-                    elif os.path.isdir(file_path):
-                        shutil.rmtree(file_path)
-                except Exception as e:
-                    print(f'Failed to delete {file_path}. Reason: {e}')
-    print("Data cleared.")
-
-def get_image_paths(folder_path, image_extensions=None):
-    """
-    Scans a folder for image files and returns a list of their paths.
-
-    Args:
-        folder_path (str): The path to the folder containing images.
-        image_extensions (list, optional): A list of image extensions to look for.
-                                           Defaults to ['.jpg', '.jpeg', '.png'].
-
-    Returns:
-        list: A list of absolute paths to the found image files.
-              Returns an empty list if the folder doesn't exist or no images are found.
-    """
-    if image_extensions is None:
-        image_extensions = ['.jpg', '.jpeg', '.png']
-
-    if not os.path.isdir(folder_path):
-        print(f"Error: Folder not found at {folder_path}")
-        return []
-
-    image_paths = []
-    for ext in image_extensions:
-        # Using os.path.join for cross-platform compatibility
-        # Using glob.glob to find files matching the pattern
-        # Adding '*' to match any filename with the given extension
-        search_pattern = os.path.join(folder_path, f"*{ext.lower()}")
-        image_paths.extend(glob.glob(search_pattern))
-        # Also search for uppercase extensions, just in case
-        search_pattern_upper = os.path.join(folder_path, f"*{ext.upper()}")
-        image_paths.extend(glob.glob(search_pattern_upper))
+    processed_data_for_web = {}
     
-    # Remove duplicates that might arise from case-insensitive filesystems
-    # and searching for both lower and upper case extensions
+    # THE FIX: Use the correct folder configuration keys.
+    folders_to_clear = [
+        app.config['UPLOAD_FOLDER'],
+        app.config['PROCESSED_FOLDER'],
+        app.config['THUMBNAIL_FOLDER']
+    ]
+    for folder in folders_to_clear:
+        if os.path.exists(folder):
+            shutil.rmtree(folder)
+        os.makedirs(folder, exist_ok=True)
+    logging.info("Cleared all previous data and directories.")
+
+def get_image_files_from_dir(directory):
+    """
+    THE FIX (2/2): Scans a directory RECURSIVELY for common image files.
+    This handles zip files that have images inside a sub-folder.
+    """
+    image_paths = []
+    # Use recursive glob to find files in subdirectories
+    for ext in ['jpg', 'jpeg', 'png', 'gif']:
+        pattern = os.path.join(directory, f'**/*.{ext.lower()}')
+        image_paths.extend(glob.glob(pattern, recursive=True))
+        # Also check for uppercase extensions
+        pattern_upper = os.path.join(directory, f'**/*.{ext.upper()}')
+        image_paths.extend(glob.glob(pattern_upper, recursive=True))
+
+    logging.info(f"Found {len(image_paths)} images in {directory}")
     return sorted(list(set(image_paths)))
 
-def cluster_faces(face_data, eps=0.43, min_samples=2):
+def cluster_faces(face_data, eps=0.45, min_samples=2, metric='euclidean'):
     """
     Clusters face encodings using DBSCAN to identify unique individuals.
 
@@ -106,6 +85,7 @@ def cluster_faces(face_data, eps=0.43, min_samples=2):
                      considered as in the neighborhood of the other (DBSCAN param).
         min_samples (int): The number of samples in a neighborhood for a point
                            to be considered as a core point (DBSCAN param).
+        metric (str): The distance metric to use for clustering.
 
     Returns:
         numpy.ndarray: An array of cluster labels for each face encoding.
@@ -123,11 +103,10 @@ def cluster_faces(face_data, eps=0.43, min_samples=2):
         print("No encodings found in face_data.")
         return None
 
-    print(f"Clustering {len(encodings)} face encodings using DBSCAN with eps={eps}, min_samples={min_samples}...")
+    print(f"Clustering {len(encodings)} face encodings using DBSCAN with eps={eps}, min_samples={min_samples}, metric='{metric}'...")
 
     # Initialize DBSCAN
-    # The default metric is 'euclidean', which is suitable for face_recognition encodings.
-    clt = DBSCAN(eps=eps, min_samples=min_samples, metric="euclidean")
+    clt = DBSCAN(eps=eps, min_samples=min_samples, metric=metric)
     clt.fit(encodings)
 
     # Get the cluster labels. Each face encoding will have a label.
@@ -147,179 +126,109 @@ def cluster_faces(face_data, eps=0.43, min_samples=2):
 
     return labels
 
-def draw_boxes_and_save(pil_img, face_locations_for_this_image, original_image_path, base_output_folder):
-    """
-    Draws bounding boxes on a given Pillow image object and saves it.
-    Args:
-        pil_img (PIL.Image): The Pillow image object (potentially resized).
-        face_locations_for_this_image (list): List of (top, right, bottom, left) tuples for faces.
-        original_image_path (str): Path to the original image (used for naming).
-        base_output_folder (str): The absolute path to the folder where the processed image will be saved.
-    Returns:
-        str: The filename of the saved image with boxes (not the full path). None if error.
-    """
-    try:
-        # We no longer need to open the image, it's passed directly
-        img = pil_img.copy() # Work on a copy to avoid modifying the original object
-            
-        draw = ImageDraw.Draw(img)
+def draw_boxes_and_save(img_obj, locations, labels, original_path, output_dir, prefix=""):
+    """Draws bounding boxes and labels on an image and saves it with a prefix."""
+    draw = ImageDraw.Draw(img_obj)
+    for (top, right, bottom, left), label in zip(locations, labels):
+        # Use yellow for unclustered, lime for clustered people
+        box_color = "yellow" if label == "Unclustered" else "lime"
+        draw.rectangle(((left, top), (right, bottom)), outline=box_color, width=3)
+        # Only add a text label if it's not a generic unclustered one
+        if label != "Unclustered":
+            draw.text((left + 6, bottom - 15), str(label), fill='white')
 
-        valid_faces_drawn = 0
-        for i, (top, right, bottom, left) in enumerate(face_locations_for_this_image):
-            # Add a check for valid coordinates
-            if top >= bottom or left >= right:
-                print(f"    Warning: Invalid bounding box coordinates for face {i+1} in {original_image_path}: (T:{top}, R:{right}, B:{bottom}, L:{left}). Skipping this box.")
-                continue
-            draw.rectangle(((left, top), (right, bottom)), outline="red", width=5)
-            valid_faces_drawn += 1
+    base_name = os.path.basename(original_path)
+    # Ensure prefix has a separator if it exists
+    prefix_str = f"{prefix}_" if prefix else ""
+    output_filename = f"{prefix_str}{base_name}"
+    output_path = os.path.join(output_dir, output_filename)
+    
+    img_obj.save(output_path)
+    return output_filename
 
-        if not valid_faces_drawn and face_locations_for_this_image: # Some locations existed but none were valid
-            print(f"    Warning: No valid faces could be drawn for {original_image_path} despite {len(face_locations_for_this_image)} detections.")
-            # Decide if you still want to save the image without boxes or return None
-            # For now, we will save it without boxes if any attempt to draw was made.
-            # If no valid faces drawn, but we intended to draw, perhaps it shouldn't be considered 'boxed'
-            # However, the current logic saves it anyway. This could be refined.
-
-        original_filename = os.path.basename(original_image_path)
-        output_filename = f"boxed_{original_filename}"
-        output_path = os.path.join(base_output_folder, output_filename)
-        
-        img.save(output_path)
-        return output_filename
-    except Exception as e:
-        print(f"Error drawing boxes for {original_image_path}: {e}")
+def crop_save_and_get_best_thumbnail(face_data_list, person_name, thumbnails_folder):
+    """Crops the best face thumbnail for a person and returns its path."""
+    if not face_data_list:
         return None
 
-def crop_save_and_get_best_thumbnail(faces_for_person, person_name, thumbnails_folder):
-    """Finds the best face, crops it, saves it, and returns the filename."""
-    if not faces_for_person:
-        return None
+    best_face = max(face_data_list, key=lambda face: (face['location'][2] - face['location'][0]) * (face['location'][1] - face['location'][3]))
+    
+    img = best_face['resized_image_obj']
+    box = (best_face['location'][3], best_face['location'][0], best_face['location'][1], best_face['location'][2])
+    
+    cropped_img = img.crop(box)
+    
+    thumbnail_filename = f"thumb_{person_name}.jpg" # Consistent naming
+    thumbnail_path = os.path.join(thumbnails_folder, thumbnail_filename)
+    cropped_img.save(thumbnail_path)
+    
+    return thumbnail_filename
 
-    best_face = None
-    max_area = -1
-
-    # Find the face with the largest bounding box area
-    for face in faces_for_person:
-        top, right, bottom, left = face['location']
-        area = (bottom - top) * (right - left)
-        if area > max_area:
-            max_area = area
-            best_face = face
-
-    if best_face is None:
-        return None
-
-    try:
-        # Crop the face from the resized image object
-        image_to_crop = best_face['resized_image_obj']
-        top, right, bottom, left = best_face['location']
-        cropped_face = image_to_crop.crop((left, top, right, bottom))
-
-        # Save the thumbnail
-        thumbnail_filename = f"thumb_{person_name}.jpg".replace(" ", "_")
-        thumbnail_path = os.path.join(thumbnails_folder, thumbnail_filename)
-        cropped_face.save(thumbnail_path, "JPEG")
-        
-        return thumbnail_filename
-    except Exception as e:
-        print(f"Error creating thumbnail for {person_name}: {e}")
-        return None
-
-def prepare_web_output(face_data, cluster_labels, abs_output_folder):
-    """
-    Processes face data and cluster labels to draw bounding boxes and group images.
-    Args:
-        face_data (list): List of dictionaries from detect_and_encode_faces.
-        cluster_labels (numpy.ndarray): Cluster labels from cluster_faces.
-        abs_output_folder (str): Absolute path to the folder to save images with boxes.
-
-    Returns:
-        tuple: (people_to_processed_images, unclustered_processed_images)
-               people_to_processed_images (dict): {person_id_str: [{'original_filename': str, 'processed_filename': str}]}
-               unclustered_processed_images (list): [{'original_filename': str, 'processed_filename': str}]
-    """
-    if cluster_labels is None or (face_data and len(face_data) != len(cluster_labels)):
-        print("Error: Face data and cluster labels mismatch or labels are missing for web prep.")
-        return {}, []
-
-    # Step 1: Group all face data by cluster label
-    # This helps in finding the best thumbnail for each person
-    faces_by_person_label = defaultdict(list)
-    if face_data:
-        for i, data_point in enumerate(face_data):
+def prepare_web_output(all_face_data, cluster_labels, output_dir_abs):
+    """Organizes clustered data for rendering in the web template."""
+    people = {}
+    unclustered = []
+    
+    label_to_faces = defaultdict(list)
+    if all_face_data:
+        for i, data_point in enumerate(all_face_data):
             label = cluster_labels[i]
-            if label != -1:
-                faces_by_person_label[label].append(data_point)
+            label_to_faces[label].append(data_point)
 
-    # Step 2: Draw boxes on unique images (this part remains the same)
-    image_path_to_boxed_filename = {}
-    unique_images_and_their_faces = defaultdict(lambda: {'locations': [], 'image_obj': None})
-    if face_data:
-        for data_point in face_data:
-            path = data_point['image_path']
-            unique_images_and_their_faces[path]['locations'].append(data_point['location'])
-            if unique_images_and_their_faces[path]['image_obj'] is None:
-                unique_images_and_their_faces[path]['image_obj'] = data_point['resized_image_obj']
+    # First, handle UNCLUSTERED faces
+    if -1 in label_to_faces:
+        unclustered_map = defaultdict(lambda: {'locations': [], 'img_obj': None})
+        for face in label_to_faces[-1]:
+            path = face['image_path']
+            unclustered_map[path]['locations'].append(face['location'])
+            unclustered_map[path]['img_obj'] = face['resized_image_obj']
+        
+        for path, data in unclustered_map.items():
+            # Pass "Unclustered" as the label for drawing yellow boxes
+            filename = draw_boxes_and_save(
+                data['img_obj'].copy(), 
+                data['locations'], 
+                ["Unclustered"] * len(data['locations']), # Pass a list of labels
+                path, 
+                output_dir_abs,
+                prefix="unclustered"
+            )
+            unclustered.append(filename)
 
-    for original_path, data in unique_images_and_their_faces.items():
-        if data['locations'] and data['image_obj']:
-            boxed_filename = draw_boxes_and_save(data['image_obj'], data['locations'], original_path, abs_output_folder)
-            if boxed_filename:
-                image_path_to_boxed_filename[original_path] = boxed_filename
+    # Now, handle CLUSTERED people
+    for label_id, faces_in_cluster in label_to_faces.items():
+        if label_id == -1:
+            continue
 
-    # Step 3: Build the final data structure for the web page
-    people_to_display_data = defaultdict(lambda: {'images': [], 'thumbnail_filename': None})
-    unclustered_display_data = []
-    
-    person_id_counter = 1
-    unique_cluster_labels_sorted = sorted(list(set(l for l in cluster_labels if l != -1)))
-    label_to_person_name = {}
-    for label_val in unique_cluster_labels_sorted:
-        person_name = f"Person_{person_id_counter}"
-        label_to_person_name[label_val] = person_name
-        person_id_counter += 1
+        person_id = f"Person_{label_id + 1}"
+        people[person_id] = {'images': [], 'thumbnail': None}
+        
+        image_to_faces_map = defaultdict(lambda: {'locations': [], 'img_obj': None})
+        for face in faces_in_cluster:
+            path = face['image_path']
+            image_to_faces_map[path]['locations'].append(face['location'])
+            image_to_faces_map[path]['img_obj'] = face['resized_image_obj']
 
-        # Create thumbnail for this person
-        thumbnail_filename = crop_save_and_get_best_thumbnail(
-            faces_by_person_label[label_val],
-            person_name,
-            app.config['FACE_THUMBNAILS_FOLDER']
-        )
+        for path, data in image_to_faces_map.items():
+            filename = draw_boxes_and_save(
+                data['img_obj'].copy(), 
+                data['locations'], 
+                [person_id] * len(data['locations']), # Pass person_id as the label
+                path, 
+                output_dir_abs,
+                prefix=person_id
+            )
+            # THE FIX: Append the filename, not a broken path
+            people[person_id]['images'].append(filename)
+
+        thumbnail_filename = crop_save_and_get_best_thumbnail(faces_in_cluster, person_id, app.config['THUMBNAIL_FOLDER'])
         if thumbnail_filename:
-            people_to_display_data[person_name]['thumbnail_filename'] = thumbnail_filename
+            people[person_id]['thumbnail'] = thumbnail_filename
             
-    person_images_added_to_web = defaultdict(set)
-    unclustered_images_added_to_web = set()
+    return people, sorted(list(set(unclustered)))
 
-    if face_data:
-        for i, data_point in enumerate(face_data):
-            original_path = data_point['image_path']
-            original_basename = os.path.basename(original_path)
-            boxed_filename = image_path_to_boxed_filename.get(original_path)
-            if not boxed_filename:
-                continue 
-
-            image_display_info = {'original_filename': original_basename, 'processed_filename': boxed_filename}
-            current_label = cluster_labels[i]
-
-            if current_label != -1:
-                person_name = label_to_person_name[current_label]
-                if boxed_filename not in person_images_added_to_web[person_name]:
-                    people_to_display_data[person_name]['images'].append(image_display_info)
-                    person_images_added_to_web[person_name].add(boxed_filename)
-            else:
-                if boxed_filename not in unclustered_images_added_to_web:
-                    unclustered_display_data.append(image_display_info)
-                    unclustered_images_added_to_web.add(boxed_filename)
-    
-    for person_name in people_to_display_data:
-        people_to_display_data[person_name]['images'].sort(key=lambda x: x['original_filename'])
-    unclustered_display_data.sort(key=lambda x: x['original_filename'])
-
-    return people_to_display_data, unclustered_display_data
-
-# --- New Generator Function for the Processing Pipeline ---
-def run_pipeline_and_yield_progress():
+# --- Main Processing Pipeline (as a Generator) ---
+def run_pipeline_and_yield_progress(eps_value):
     """
     Runs the entire face processing pipeline and yields Server-Sent Events (SSE)
     formatted progress updates.
@@ -333,136 +242,227 @@ def run_pipeline_and_yield_progress():
 
     try:
         base_dir = os.path.abspath(os.path.dirname(__file__))
-        input_dir_abs_path = os.path.join(base_dir, app.config['INPUT_FOLDER'])
-        output_dir_abs_path = os.path.join(base_dir, app.config['OUTPUT_FOLDER'])
+        input_dir_abs_path = os.path.join(base_dir, app.config['UPLOAD_FOLDER'])
+        output_dir_abs_path = os.path.join(base_dir, app.config['PROCESSED_FOLDER'])
 
-        yield sse_message({"message": "Scanning for images..."})
-        image_files = get_image_paths(input_dir_abs_path)
+        yield sse_message({"message": "Starting new analysis..."})
+
+        # 1. Unzip and find images
+        zip_path = next(glob.iglob(os.path.join(app.config['UPLOAD_FOLDER'], '*.zip')), None)
+        if not zip_path:
+            logging.error("PIPELINE ERROR: No .zip file found in upload folder.")
+            yield sse_message({"message": "Error: Could not find the uploaded .zip file.", "error": True})
+            return
+        
+        unzip_dir = os.path.join(app.config['UPLOAD_FOLDER'], 'unzipped')
+        
+        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+            zip_ref.extractall(unzip_dir)
+        
+        image_files = get_image_files_from_dir(unzip_dir)
+        
         if not image_files:
+            logging.error(f"PIPELINE ERROR: get_image_files_from_dir returned 0 files from {unzip_dir}.")
             yield sse_message({"message": "Error: No valid image files found in the zip.", "error": True})
             return
         
         total_images = len(image_files)
-        yield sse_message({"message": f"Found {total_images} images. Starting face detection..."})
+        yield sse_message({"message": f"Found {total_images} images. Starting face analysis..."})
         
-        # --- Refactor detect_and_encode_faces to yield progress ---
+        # 2. Face Detection and Encoding Loop
         all_face_data = []
         total_faces_found = 0
-        MAX_IMAGE_DIMENSION = 1600 # New constant for resizing
+        images_with_no_faces = []
+        MAX_IMAGE_DIMENSION = 1600
 
         for i, image_path in enumerate(image_files):
             progress_percent = int(((i + 1) / total_images) * 100)
-            msg = f"({i+1}/{total_images}) Processing {os.path.basename(image_path)}..."
+            msg = f"({i+1}/{total_images}) Analyzing {os.path.basename(image_path)}..."
             yield sse_message({"message": msg, "progress": progress_percent})
 
+            # Define temp_image_path here to ensure it's in scope for the finally block
+            temp_image_path = None
             try:
-                # --- New Resizing Logic ---
+                # Load and potentially resize the image
                 img_to_process = Image.open(image_path)
-                # Ensure image has a valid mode for face_recognition
                 if img_to_process.mode not in ['RGB', 'L']:
                     img_to_process = img_to_process.convert('RGB')
-                
-                # Check if resizing is needed
                 if max(img_to_process.size) > MAX_IMAGE_DIMENSION:
-                    yield sse_message({
-                        "message": f"{msg} Image is large, resizing...",
-                        "progress": progress_percent
-                    })
+                    yield sse_message({"message": f"{msg} Image is large, resizing...", "progress": progress_percent})
                     img_to_process.thumbnail((MAX_IMAGE_DIMENSION, MAX_IMAGE_DIMENSION), Image.Resampling.LANCZOS)
-
-                # Convert PIL image to numpy array for face_recognition
-                image = np.array(img_to_process)
-                # --- End of Resizing Logic ---
-
-                # Use the resized 'image' numpy array and the constant for the model
-                face_locations = face_recognition.face_locations(image, model=FACE_DETECTION_MODEL)
                 
-                if face_locations:
-                    total_faces_found += len(face_locations)
-                    msg_faces = f"Found {len(face_locations)} face(s). Total so far: {total_faces_found}."
-                    yield sse_message({"message": f"{msg} {msg_faces}", "progress": progress_percent})
-                    face_encodings = face_recognition.face_encodings(image, known_face_locations=face_locations)
-                    for loc, enc in zip(face_locations, face_encodings):
-                        # Store the resized image object itself along with other data
+                # **THE FIX:** Save the (potentially resized) image to a temporary file.
+                # This ensures DeepFace analyzes the same image we use for drawing later.
+                temp_image_path = os.path.join(app.config['UPLOAD_FOLDER'], f"temp_{os.path.basename(image_path)}")
+                img_to_process.save(temp_image_path)
+
+                # Now, analyze the temporary (resized) image file.
+                embedding_objs = DeepFace.represent(
+                    img_path=temp_image_path, 
+                    model_name='ArcFace', 
+                    enforce_detection=False,
+                    detector_backend='retinaface'
+                )
+
+                # The rest of the logic for processing `embedding_objs` is correct
+                if embedding_objs and len(embedding_objs) > 0:
+                    newly_found = 0
+                    for emb_obj in embedding_objs:
+                        facial_area = emb_obj['facial_area']
+                        x, y, w, h = facial_area['x'], facial_area['y'], facial_area['w'], facial_area['h']
+                        
+                        # **New Sanity Check:** If the bounding box is most of the image, it's probably a false positive.
+                        img_width, img_height = img_to_process.size
+                        box_area = w * h
+                        img_area = img_width * img_height
+
+                        # If box covers more than 95% of the image, skip it.
+                        if box_area > 0 and img_area > 0 and (box_area / img_area > 0.95):
+                            logging.warning(f"Skipping a bounding box on {os.path.basename(image_path)} that covers most of the image (likely a false positive).")
+                            continue
+                        
+                        newly_found += 1
+                        # Convert (x, y, w, h) to (top, right, bottom, left)
+                        face_location = (y, x + w, y + h, x)
+                        
                         all_face_data.append({
                             'image_path': image_path,
-                            'location': loc,
-                            'encoding': enc,
-                            'resized_image_obj': img_to_process # Add this
+                            'location': face_location,
+                            'encoding': emb_obj['embedding'],
+                            'resized_image_obj': img_to_process
                         })
+                    
+                    if newly_found > 0:
+                        total_faces_found += newly_found
+                        msg_faces = f"Found {newly_found} face(s). Total so far: {total_faces_found}."
+                        yield sse_message({"message": f"{msg} {msg_faces}", "progress": progress_percent})
+                    else:
+                        # This case happens if all found faces were too large (false positives)
+                        images_with_no_faces.append(os.path.basename(image_path))
+                        yield sse_message({"message": f"{msg} No valid faces found.", "progress": progress_percent})
+                else:
+                    # THE FIX: Add image to the no_faces list
+                    images_with_no_faces.append(os.path.basename(image_path))
+                    yield sse_message({"message": f"{msg} No faces found.", "progress": progress_percent})
+
             except Exception as e:
-                yield sse_message({"message": f"Error processing {os.path.basename(image_path)}: {e}"})
-                continue
+                logging.error(f"An unexpected error occurred processing {os.path.basename(image_path)}: {e}", exc_info=True)
+                yield sse_message({"message": f"Error on {os.path.basename(image_path)}. See console.", "error": True})
+                # continue is handled by the finally block
+            
+            finally:
+                # **Crucially, clean up the temp file** whether an error occurred or not.
+                if temp_image_path and os.path.exists(temp_image_path):
+                    os.remove(temp_image_path)
         
-        yield sse_message({"message": f"Finished image processing. Found {total_faces_found} total faces. Now clustering..."})
+        yield sse_message({"message": f"Finished image analysis. Found {total_faces_found} total faces. Now clustering..."})
 
         if not all_face_data:
             yield sse_message({"message": "No faces were detected in any images.", "error": True})
             return
 
-        cluster_labels_arr = cluster_faces(all_face_data)
+        # THE FIX: No longer need to get from session, it's passed as an argument.
+        yield sse_message({"message": f"Clustering with eps = {eps_value}..."})
+        
+        cluster_labels_arr = cluster_faces(all_face_data, eps=eps_value, min_samples=2, metric='cosine')
+
         yield sse_message({"message": "Clustering complete. Generating final output images..."})
         
         people_map, unclustered_list = prepare_web_output(all_face_data, cluster_labels_arr, output_dir_abs_path)
         
-        processed_data_for_web = {"people": people_map, "unclustered": unclustered_list, "ran_processing": True}
-        yield sse_message({"message": "Processing complete!", "finished": True})
+        # Update the global data structure with results AND the eps value used
+        processed_data_for_web = {
+            "people": people_map,
+            "unclustered_faces": len(unclustered_list),
+            "unclustered_images": unclustered_list,
+            "total_people": len(people_map),
+            "images_with_no_faces": images_with_no_faces,
+            "eps_used": eps_value  # Store the eps value that was used for this result
+        }
+        yield sse_message({"message": "Done!", "progress": 100, "finished": True})
 
     except Exception as e:
-        print(f"Error during pipeline: {e}")
+        logging.error(f"A critical error occurred in the pipeline: {e}", exc_info=True)
         yield sse_message({"message": f"A critical error occurred: {e}", "error": True})
 
 # --- Flask Routes ---
 @app.route('/', methods=['GET'])
 def index():
-    # This route now ONLY displays the page with cached data.
-    # Pass the model name to the template
-    return render_template('index.html', data=processed_data_for_web, model_name=FACE_DETECTION_MODEL)
+    # **THE FIX:** Ensure processed_data_for_web is a dictionary before accessing it.
+    # This prevents the app from crashing on the first load if the data is None.
+    current_data = processed_data_for_web if isinstance(processed_data_for_web, dict) else {}
+    
+    return render_template(
+        'index.html', 
+        data=current_data, 
+        model_name='ArcFace',
+        eps_value=current_data.get('eps_used', 0.5)
+    )
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
-    if 'zip_file' not in request.files:
-        return jsonify({"error": "No file part in the request."}), 400
+    if 'zipfile' not in request.files:
+        return redirect(request.url)
+    file = request.files['zipfile']
+    if file.filename == '' or not file.filename.endswith('.zip'):
+        return redirect(request.url)
+
+    # THE FIX: Clear all old data BEFORE saving the new file.
+    clear_all_data()
+
+    try:
+        eps_value = float(request.form.get('eps_value', '0.5'))
+    except (ValueError, TypeError):
+        eps_value = 0.5
+    session['eps_value'] = eps_value
+
+    zip_filename = file.filename
+    zip_path = os.path.join(app.config['UPLOAD_FOLDER'], zip_filename)
+    file.save(zip_path)
     
-    file = request.files['zip_file']
-    if file.filename == '':
-        return jsonify({"error": "No file selected for uploading."}), 400
+    session['is_processing'] = True
+    return redirect(url_for('processing'))
 
-    if file and file.filename.endswith('.zip'):
-        clear_all_data()
-        filename = "upload.zip"
-        zip_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(zip_path)
+@app.route('/processing')
+def processing():
+    """
+    This route shows a page that will then connect to the /stream
+    endpoint to get live updates.
+    """
+    if not session.get('is_processing'):
+        # If the user somehow lands here without uploading, send them home.
+        return redirect(url_for('index'))
+    return render_template('processing.html')
 
-        try:
-            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-                zip_ref.extractall(app.config['INPUT_FOLDER'])
-            os.remove(zip_path)
-            return jsonify({"success": True, "message": "File uploaded and extracted."})
-        except Exception as e:
-            return jsonify({"error": f"An error occurred during extraction: {e}"}), 500
-    else:
-        return jsonify({"error": "Invalid file type. Please upload a .zip file."}), 400
-
-@app.route('/stream_processing')
-def stream_processing():
-    """The SSE endpoint that streams progress."""
-    return Response(run_pipeline_and_yield_progress(), mimetype='text/event-stream')
+@app.route('/stream')
+def stream():
+    """
+    This is the endpoint that the processing page connects to. It streams
+    the output of the main pipeline generator.
+    """
+    if not session.get('is_processing'):
+        return Response(status=404)
+    
+    # THE FIX: Read eps from session here, and pass it to the generator.
+    eps_value = session.get('eps_value', 0.5)
+    
+    # The generator function is the source of our SSE stream
+    return Response(run_pipeline_and_yield_progress(eps_value=eps_value), mimetype='text/event-stream')
 
 @app.route('/face_thumbnails/<filename>')
 def serve_face_thumbnail(filename):
-    return send_from_directory(app.config['FACE_THUMBNAILS_FOLDER'], filename)
+    return send_from_directory(app.config['THUMBNAIL_FOLDER'], filename)
 
 @app.route('/output_images_with_boxes/<filename>')
 def serve_processed_image(filename):
-    return send_from_directory(app.config['OUTPUT_FOLDER'], filename, as_attachment=False)
+    return send_from_directory(app.config['PROCESSED_FOLDER'], filename, as_attachment=False)
 
 # --- Main execution for Flask app ---
 if __name__ == '__main__':
     # The old script-style main block is replaced by Flask's development server run.
     # Make sure input_images and output_images_with_boxes are at the same level as app.py
-    # or adjust app.config['INPUT_FOLDER'] and app.config['OUTPUT_FOLDER'] accordingly.
-    print(f"Input images expected in: {os.path.join(os.path.abspath(os.path.dirname(__file__)), app.config['INPUT_FOLDER'])}")
-    print(f"Processed images will be saved to: {os.path.join(os.path.abspath(os.path.dirname(__file__)), app.config['OUTPUT_FOLDER'])}")
+    # or adjust app.config['UPLOAD_FOLDER'] and app.config['PROCESSED_FOLDER'] accordingly.
+    print(f"Input images expected in: {os.path.join(os.path.abspath(os.path.dirname(__file__)), app.config['UPLOAD_FOLDER'])}")
+    print(f"Processed images will be saved to: {os.path.join(os.path.abspath(os.path.dirname(__file__)), app.config['PROCESSED_FOLDER'])}")
     # We disable the reloader to prevent it from restarting the server when we upload files.
     app.run(debug=True, use_reloader=False) # debug=True is helpful for development, auto-reloads on code change.
