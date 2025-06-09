@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Face Cracker 3000</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600&family=Roboto:wght@400;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary-blue: #0d6efd;
+            --light-gray: #f8f9fa;
+            --dark-text: #212529;
+            --white: #ffffff;
+            --border-color: #dee2e6;
+        }
+
+        body { 
+            font-family: 'Roboto', -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+            margin: 0; 
+            padding: 20px;
+            background-color: var(--light-gray);
+            color: var(--dark-text);
+        }
+        
+        .container { 
+            max-width: 1200px;
+            margin: 40px auto;
+            background-color: var(--white); 
+            padding: 20px 40px; 
+            border-radius: 12px; 
+            box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+        }
+
+        h1, h2 {
+            font-family: 'Orbitron', sans-serif;
+            text-align: center;
+        }
+
+        h1 {
+            font-family: 'Orbitron', sans-serif;
+            text-align: center;
+            font-size: 4em;
+            font-weight: 900;
+            margin-bottom: 10px;
+            
+            color: var(--dark-text);
+            text-shadow: 3px 3px 0px var(--border-color);
+        }
+
+        h2 {
+            color: #343a40;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 10px;
+            margin-top: 40px;
+            font-size: 1.8em;
+            font-weight: 700;
+        }
+
+        .person-section { margin-bottom: 30px; border-bottom: 1px solid #e9ecef; padding-bottom: 20px; }
+        
+        /* New styles for the person header */
+        .person-header {
+            display: flex;
+            align-items: center;
+            gap: 20px; /* Space between thumbnail and name */
+            margin-bottom: 20px;
+        }
+        .person-thumbnail {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%; /* Make it circular */
+            object-fit: cover; /* Ensure the image covers the area without distortion */
+            border: 3px solid var(--primary-blue);
+        }
+
+        .person-section h3 { 
+            color: var(--dark-text); 
+            font-size: 1.5em;
+            font-weight: 700;
+            margin: 0; /* Remove default margin to align nicely */
+        }
+
+        .image-gallery { display: flex; flex-wrap: wrap; gap: 15px; }
+        
+        .image-item { 
+            border: 1px solid var(--border-color); 
+            padding: 10px; 
+            border-radius: 8px; 
+            background-color: var(--light-gray); 
+            text-align: center; 
+            transition: all 0.3s ease;
+        }
+        .image-item:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 16px rgba(0,0,0,0.1);
+        }
+
+        .image-item img { max-width: 200px; max-height: 200px; display: block; margin-bottom: 5px; border-radius: 4px;}
+        .image-item p { font-size: 0.9em; color: #6c757d; margin: 0; }
+        
+        .status-message { 
+            margin-top: 15px; 
+            padding: 15px; 
+            background-color: #e7f3fe; 
+            border-left: 5px solid var(--primary-blue);
+            color: #0c5460;
+            border-radius: 4px;
+        }
+        .error { 
+            color: #721c24;
+            background-color: #f8d7da;
+            border-left-color: #f5c6cb;
+        }
+        
+        .upload-section {
+            background-color: #f8f9fa;
+            border: 2px dashed var(--border-color);
+            padding: 30px;
+            text-align: center;
+            border-radius: 8px;
+            margin: 40px 0;
+        }
+        .upload-section h2 { border: none; margin-top: 0; }
+
+        input[type="file"]::file-selector-button {
+            font-family: inherit;
+            font-weight: 500;
+            background-color: var(--primary-blue);
+            color: var(--white);
+            border: 1px solid var(--primary-blue);
+            padding: 10px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        input[type="file"]::file-selector-button:hover {
+            background-color: #0b5ed7;
+            border-color: #0a58ca;
+        }
+
+        button[type="submit"] {
+            font-family: inherit;
+            font-weight: 500;
+            background-color: var(--primary-blue);
+            color: var(--white);
+            border: 1px solid var(--primary-blue);
+            padding: 10px 20px;
+            font-size: 1.1em;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            margin-left: 10px;
+        }
+        button[type="submit"]:hover {
+            background-color: #0b5ed7;
+            border-color: #0a58ca;
+        }
+
+        #loader-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background-color: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(4px);
+            display: none; justify-content: center; align-items: center;
+            z-index: 1000; flex-direction: column;
+        }
+        .spinner {
+            border: 8px solid #e9ecef;
+            border-top: 8px solid var(--primary-blue);
+            border-radius: 50%; width: 60px; height: 60px;
+            animation: spin 1s linear infinite;
+        }
+        #loader-overlay p { margin-top: 20px; font-size: 1.2em; color: var(--dark-text); }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        .progress-bar-container { width: 80%; max-width: 400px; background-color: #e9ecef; border-radius: 4px; margin-top: 10px; border: 1px solid var(--border-color); }
+        .progress-bar { width: 0%; height: 20px; background-color: var(--primary-blue); text-align: center; line-height: 20px; color: white; border-radius: 4px; transition: width 0.4s ease; }
+
+        /* New subtitle style */
+        .mode-subtitle {
+            text-align: center;
+            margin-top: 0;
+            margin-bottom: 40px;
+            font-style: italic;
+            color: #6c757d; /* A muted grey color */
+        }
+    </style>
+</head>
+<body>
+    <div id="loader-overlay">
+        <div class="spinner"></div>
+        <div style="text-align: center;">
+            <p id="loader-text">Starting...</p>
+            <div class="progress-bar-container">
+                <div id="progress-bar" class="progress-bar">0%</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="container">
+        <h1>Face cracker 3000</h1>
+
+        {% if model_name %}
+            <p class="mode-subtitle">
+                {% if model_name == 'hog' %}
+                    (Mode: Fast processing but low precision)
+                {% elif model_name == 'cnn' %}
+                    (Mode: Slow but high precision)
+                {% endif %}
+            </p>
+        {% endif %}
+
+        <!-- Section for Flashed Messages -->
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                <div class="status-message">
+                    {% for message in messages %}
+                        {{ message }}<br>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+
+        <!-- Upload Form -->
+        <div class="upload-section">
+            <h2>Upload a Zip File of Photos</h2>
+            <form id="upload-form" method="post" enctype="multipart/form-data" action="{{ url_for('upload_file') }}">
+                <input type="file" name="zip_file" accept=".zip" required>
+                <button type="submit">Upload and Process</button>
+            </form>
+        </div>
+
+        <hr style="margin: 30px 0;">
+
+        <h2>Results</h2>
+
+        {% if data is none and not error_message %}
+            <div class="status-message">
+                Please upload a zip file to begin processing.
+            </div>
+        {% endif %}
+
+        {% if error_message %}
+            <p class="error">{{ error_message }}</p>
+        {% elif data %}
+            {% if data.get("ran_processing") %}
+                 <div class="status-message">Showing results from the last upload.</div>
+            {% endif %}
+
+            {% if data.people %}
+                <h2>Identified People</h2>
+                {% for person_id, person_data in data.people.items()|sort %}
+                    <div class="person-section">
+                        <div class="person-header">
+                            {% if person_data.thumbnail_filename %}
+                                <img src="{{ url_for('serve_face_thumbnail', filename=person_data.thumbnail_filename) }}" alt="Thumbnail for {{ person_id }}" class="person-thumbnail">
+                            {% endif %}
+                            <h3>{{ person_id }}</h3>
+                        </div>
+                        <div class="image-gallery">
+                            {% for img_info in person_data.images %}
+                                <div class="image-item">
+                                    <img src="{{ url_for('serve_processed_image', filename=img_info.processed_filename) }}" alt="Processed image of {{ img_info.original_filename }}">
+                                    <p>Original: {{ img_info.original_filename }}</p>
+                                </div>
+                            {% else %}
+                                <p>No images found for this person.</p>
+                            {% endfor %}
+                        </div>
+                    </div>
+                {% endfor %}
+            {% else %}
+                 <div class="status-message">No unique people were identified from the clustering after processing.</div>
+            {% endif %}
+
+            {% if data.unclustered %}
+                <h2>Images with Unclustered Faces (Noise Points)</h2>
+                 <div class="image-gallery">
+                    {% for img_info in data.unclustered %}
+                         <div class="image-item">
+                            <img src="{{ url_for('serve_processed_image', filename=img_info.processed_filename) }}" alt="Unclustered face in {{ img_info.original_filename }}">
+                            <p>Original: {{ img_info.original_filename }}</p>
+                        </div>
+                    {% endfor %}
+                </div>
+            {% elif data.people and not data.unclustered %}
+                 <div class="status-message">No unclustered (noise) faces found among the processed images.</div>
+            {% elif not data.people and not data.unclustered and data.get("ran_processing") %}
+                 <div class="status-message">No faces suitable for clustering were found or processed.</div>
+            {% endif %}
+        {% else %}
+            <!-- This part is now handled by the specific message above for 'data is none' -->
+        {% endif %}
+    </div>
+
+    <!-- New JavaScript to handle fetch and SSE -->
+    <script>
+        document.getElementById('upload-form').addEventListener('submit', function(event) {
+            event.preventDefault(); // Stop the default form submission
+
+            const form = event.target;
+            const fileInput = form.querySelector('input[type="file"]');
+            
+            if (fileInput.files.length === 0) {
+                alert('Please select a zip file to upload.');
+                return;
+            }
+
+            const formData = new FormData(form);
+            const loaderOverlay = document.getElementById('loader-overlay');
+            const loaderText = document.getElementById('loader-text');
+            const progressBar = document.getElementById('progress-bar');
+            
+            // Show loader
+            loaderOverlay.style.display = 'flex';
+            loaderText.textContent = 'Uploading file...';
+            progressBar.style.width = '0%';
+            progressBar.textContent = '0%';
+
+
+            // Step 1: Upload the file via Fetch API
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.error) {
+                    alert('Upload failed: ' + data.error);
+                    loaderOverlay.style.display = 'none'; // Hide loader on failure
+                    return;
+                }
+                
+                // Step 2: If upload is successful, connect to the SSE stream
+                loaderText.textContent = 'Upload complete. Starting processing...';
+                
+                const eventSource = new EventSource('/stream_processing');
+
+                eventSource.onmessage = function(event) {
+                    const eventData = JSON.parse(event.data);
+                    
+                    // Update loader text
+                    if (eventData.message) {
+                        loaderText.innerHTML = eventData.message;
+                    }
+
+                    // Update progress bar
+                    if (eventData.progress !== undefined) {
+                        progressBar.style.width = eventData.progress + '%';
+                        progressBar.textContent = eventData.progress + '%';
+                    }
+
+                    // Check for finished signal
+                    if (eventData.finished || eventData.error) {
+                        eventSource.close();
+                        // Give a brief moment for the user to read the final message
+                        setTimeout(() => {
+                            // Reload the page to show the final results from cache
+                            window.location.href = '/';
+                        }, 1500); 
+                    }
+                };
+
+                eventSource.onerror = function(err) {
+                    console.error('EventSource failed:', err);
+                    loaderText.textContent = 'An error occurred with the processing stream. Please try again.';
+                    eventSource.close();
+                    // Optionally hide the loader after a delay
+                    setTimeout(() => { loaderOverlay.style.display = 'none'; }, 3000);
+                };
+
+            })
+            .catch(error => {
+                console.error('Error during upload:', error);
+                alert('An error occurred during file upload.');
+                loaderOverlay.style.display = 'none';
+            });
+        });
+    </script>
+</body>
+</html> 

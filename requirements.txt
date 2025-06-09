@@ -1,0 +1,6 @@
+Flask
+numpy
+scikit-learn
+face-recognition
+Pillow
+gunicorn 
