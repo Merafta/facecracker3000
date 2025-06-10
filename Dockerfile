@@ -7,8 +7,12 @@ WORKDIR /app
 # Copy the requirements file into the container at /app
 COPY requirements.txt .
 
-# No need to install cmake anymore as deepface doesn't need it.
-# RUN apt-get update && apt-get install -y --no-install-recommends build-essential cmake
+# Install system dependencies required by OpenCV and other libraries
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    libgl1-mesa-glx \
+    && rm -rf /var/lib/apt/lists/*
 
 # Install the python packages from requirements.txt in one go
 RUN pip install --no-cache-dir -r requirements.txt
