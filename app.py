@@ -116,52 +116,68 @@ def draw_boxes_and_save(img_obj, locations, labels, original_path, output_dir, p
     return output_filename
 
 def crop_save_and_get_best_thumbnail(face_data_list, person_name, thumbnails_folder):
-    """Crops the best face thumbnail for a person and returns its path."""
+    """
+    Crops the best face thumbnail for a person and returns its path.
+    This version is memory-efficient, reading the image from disk.
+    """
     if not face_data_list:
         return None
 
+    # Find the face with the largest bounding box area
     best_face = max(face_data_list, key=lambda face: (face['location'][2] - face['location'][0]) * (face['location'][1] - face['location'][3]))
     
-    img = best_face['resized_image_obj']
-    box = (best_face['location'][3], best_face['location'][0], best_face['location'][1], best_face['location'][2])
-    
-    cropped_img = img.crop(box)
-    
-    thumbnail_filename = f"thumb_{person_name}.jpg"
-    thumbnail_path = os.path.join(thumbnails_folder, thumbnail_filename)
-    cropped_img.save(thumbnail_path)
+    # Memory-Efficient: Open and resize the image for the best face just in time
+    with Image.open(best_face['image_path']).convert('RGB') as img:
+        max_size = 1600
+        if img.width > max_size or img.height > max_size:
+            img.thumbnail((max_size, max_size))
+
+        # Define the box for cropping
+        box = (best_face['location'][3], best_face['location'][0], best_face['location'][1], best_face['location'][2])
+        cropped_img = img.crop(box)
+        
+        thumbnail_filename = f"thumb_{person_name}.jpg"
+        thumbnail_path = os.path.join(thumbnails_folder, thumbnail_filename)
+        cropped_img.save(thumbnail_path)
     
     return thumbnail_filename
 
 def prepare_web_output(all_face_data, cluster_labels, output_dir_abs):
-    """Organizes clustered data for rendering in the web template."""
+    """
+    Organizes clustered data for rendering. Memory-efficient version that reads
+    images from disk as needed instead of holding them in memory.
+    """
     people = {}
     unclustered = []
     
+    # Group all face data by their original image path and cluster label
     label_to_faces = defaultdict(list)
     if all_face_data:
         for i, data_point in enumerate(all_face_data):
             label = cluster_labels[i]
             label_to_faces[label].append(data_point)
 
+    # --- Process Unclustered Faces ---
     if -1 in label_to_faces:
-        unclustered_map = defaultdict(lambda: {'locations': [], 'img_obj': None})
+        # Group unclustered faces by their image path
+        unclustered_by_image = defaultdict(list)
         for face in label_to_faces[-1]:
-            path = face['image_path']
-            unclustered_map[path]['locations'].append(face['location'])
-            unclustered_map[path]['img_obj'] = face['resized_image_obj']
+            unclustered_by_image[face['image_path']].append(face['location'])
         
-        for path, data in unclustered_map.items():
-            filename = draw_boxes_and_save(
-                data['img_obj'].copy(), 
-                data['locations'], 
-                ["Unclustered"] * len(data['locations']),
-                path, 
-                output_dir_abs,
-                prefix="unclustered"
-            )
-            unclustered.append(filename)
+        # Draw boxes for each image that has unclustered faces
+        for path, locations in unclustered_by_image.items():
+            with Image.open(path).convert('RGB') as img:
+                max_size = 1600
+                if img.width > max_size or img.height > max_size:
+                    img.thumbnail((max_size, max_size))
+                
+                filename = draw_boxes_and_save(
+                    img, locations, ["Unclustered"] * len(locations),
+                    path, output_dir_abs, prefix="unclustered"
+                )
+                unclustered.append(filename)
 
+    # --- Process Clustered Faces ---
     for label_id, faces_in_cluster in label_to_faces.items():
         if label_id == -1:
             continue
@@ -169,23 +185,25 @@ def prepare_web_output(all_face_data, cluster_labels, output_dir_abs):
         person_id = f"Person_{label_id + 1}"
         people[person_id] = {'images': [], 'thumbnail': None}
         
-        image_to_faces_map = defaultdict(lambda: {'locations': [], 'img_obj': None})
+        # Group faces for this person by their original image path
+        clustered_by_image = defaultdict(list)
         for face in faces_in_cluster:
-            path = face['image_path']
-            image_to_faces_map[path]['locations'].append(face['location'])
-            image_to_faces_map[path]['img_obj'] = face['resized_image_obj']
+            clustered_by_image[face['image_path']].append(face['location'])
 
-        for path, data in image_to_faces_map.items():
-            filename = draw_boxes_and_save(
-                data['img_obj'].copy(), 
-                data['locations'], 
-                [person_id] * len(data['locations']),
-                path, 
-                output_dir_abs,
-                prefix=person_id
-            )
-            people[person_id]['images'].append(filename)
+        # Draw boxes for each image associated with this person
+        for path, locations in clustered_by_image.items():
+            with Image.open(path).convert('RGB') as img:
+                max_size = 1600
+                if img.width > max_size or img.height > max_size:
+                    img.thumbnail((max_size, max_size))
 
+                filename = draw_boxes_and_save(
+                    img, locations, [person_id] * len(locations),
+                    path, output_dir_abs, prefix=person_id
+                )
+                people[person_id]['images'].append(filename)
+
+        # Generate a thumbnail for this person using the most suitable face
         thumbnail_filename = crop_save_and_get_best_thumbnail(faces_in_cluster, person_id, app.config['THUMBNAIL_FOLDER'])
         if thumbnail_filename:
             people[person_id]['thumbnail'] = thumbnail_filename
@@ -271,11 +289,12 @@ def run_pipeline_and_yield_progress(eps_value):
 
                     for face_info in found_faces:
                         if face_info["face_confidence"] > 0:  # Check if a face was actually found
+                            # Memory-Efficient: Do NOT store the image object here.
+                            # Only store the path and metadata.
                             all_face_data.append({
                                 'image_path': img_path,
                                 'encoding': face_info['embedding'],
                                 'location': (face_info['facial_area']['y'], face_info['facial_area']['x'] + face_info['facial_area']['w'], face_info['facial_area']['y'] + face_info['facial_area']['h'], face_info['facial_area']['x']),
-                                'resized_image_obj': img.copy() 
                             })
 
             except Exception as e:
