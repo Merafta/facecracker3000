@@ -4,6 +4,10 @@ FROM python:3.9-slim
 # Set the working directory in the container
 WORKDIR /app
 
+# Set an environment variable to tell deepface where to store its models.
+# This avoids a permission error when it tries to write to the root directory.
+ENV DEEPFACE_HOME /app/.deepface
+
 # Copy the requirements file into the container at /app
 COPY requirements.txt .
 
