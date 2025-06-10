@@ -5,8 +5,8 @@ FROM python:3.9-slim
 WORKDIR /app
 
 # Set an environment variable to tell deepface where to store its models.
-# This avoids a permission error by using the writable user home directory.
-ENV DEEPFACE_HOME /home/user/.deepface
+# This avoids permission errors by using the guaranteed-writable /tmp directory.
+ENV DEEPFACE_HOME /tmp/.deepface
 
 # Copy the requirements file into the container at /app
 COPY requirements.txt .
