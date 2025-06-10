@@ -228,9 +228,10 @@ def run_pipeline_and_yield_progress(eps_value):
         yield sse_message({"message": "Starting new analysis..."})
 
         # 1. Unzip and find images
-        zip_path = session.get('zip_path')
-        if not zip_path or not os.path.exists(zip_path):
-            yield sse_message({"error": "No zip file found or session expired. Please upload again."})
+        # Construct the path to the uploaded zip file directly.
+        zip_path = os.path.join(app.config['UPLOAD_FOLDER'], 'input.zip')
+        if not os.path.exists(zip_path):
+            yield sse_message({"error": "No zip file found. Please upload again."})
             return
 
         yield sse_message({"message": "Extracting images from zip file..."})
@@ -343,13 +344,12 @@ def upload_file():
     if file and file.filename.endswith('.zip'):
         clear_all_data()
         
-        # Save the zip file to a secure location
+        # Save the zip file to a predictable, fixed location.
         filename = "input.zip" 
         zip_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
         file.save(zip_path)
         
-        # Store path in session to be picked up by the processing stream
-        session['zip_path'] = zip_path
+        # We no longer need the session. The processing stream will find the file.
         
         # Redirect to the processing page
         return redirect(url_for('processing'))
