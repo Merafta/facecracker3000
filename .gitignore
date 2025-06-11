@@ -27,3 +27,6 @@ Thumbs.db
 /input_images/
 /output_images_with_boxes/
 /face_thumbnails/ 
+
+# Test data
+/test-data/
