@@ -28,13 +28,24 @@
             const progressBar = document.getElementById('progress-bar');
             const progressMessage = document.getElementById('progress-message');
             
-            const eventSource = new EventSource("/stream");
+            // --- THE FIX IS HERE ---
+            // 1. Get the URL parameters from the current page's URL
+            const urlParams = new URLSearchParams(window.location.search);
+            const epsValue = urlParams.get('eps');
+
+            // 2. Construct the correct URL for the stream, including the eps value
+            // If epsValue is null, it will just use /stream, and the backend will use its default.
+            const streamUrl = epsValue ? `/stream?eps=${epsValue}` : '/stream';
+            
+            // 3. Start the event source with the corrected URL
+            const eventSource = new EventSource(streamUrl);
+            // --- END OF FIX ---
 
             eventSource.onmessage = function(event) {
                 const data = JSON.parse(event.data);
 
                 if (data.error) {
-                    progressMessage.textContent = `Error: ${data.message}`;
+                    progressMessage.textContent = `Error: ${data.message || data.error}`;
                     progressMessage.style.color = 'red';
                     eventSource.close();
                     return;
@@ -49,11 +60,13 @@
                     progressMessage.textContent = data.message;
                 }
 
-                if (data.finished) {
-                    progressMessage.textContent = "Processing complete! Redirecting...";
+                if (data.status === "complete") {
+                    progressMessage.textContent = "Analysis complete! Redirecting...";
+                    // Add a small delay to allow the message to be seen before redirecting
+                    setTimeout(() => {
+                        window.location.href = "/";
+                    }, 500);
                     eventSource.close();
-                    // Redirect back to the main page to see the results
-                    window.location.href = "/";
                 }
             };
 
@@ -66,4 +79,4 @@
         });
     </script>
 </body>
-</html> 
+</html>

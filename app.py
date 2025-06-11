@@ -40,13 +40,12 @@ def log_request_info():
     """Log information about the incoming request before handling it."""
     app.logger.debug(f"--- [DEBUG] Incoming Request: {request.method} {request.path} ---")
 
-def clear_all_data():
-    """Clears all generated files and resets the global data cache."""
+def clear_output_data():
+    """Clears processed files and resets the global data cache."""
     global processed_data_for_web
     processed_data_for_web = {}
     
     folders_to_clear = [
-        app.config['UPLOAD_FOLDER'],
         app.config['PROCESSED_FOLDER'],
         app.config['THUMBNAIL_FOLDER']
     ]
@@ -54,7 +53,7 @@ def clear_all_data():
         if os.path.exists(folder):
             shutil.rmtree(folder)
         os.makedirs(folder, exist_ok=True)
-    logging.info("Cleared all previous data and directories.")
+    logging.info("Cleared processed data and directories.")
 
 def get_image_files_from_dir(directory):
     """
@@ -147,6 +146,7 @@ def prepare_web_output(all_face_data, cluster_labels, output_dir_abs):
     Organizes clustered data for rendering. Memory-efficient version that reads
     images from disk as needed instead of holding them in memory.
     """
+    app.logger.info("--- Starting prepare_web_output ---")
     people = {}
     unclustered = []
     
@@ -166,6 +166,7 @@ def prepare_web_output(all_face_data, cluster_labels, output_dir_abs):
         
         # Draw boxes for each image that has unclustered faces
         for path, locations in unclustered_by_image.items():
+            app.logger.info(f"Drawing unclustered boxes on: {os.path.basename(path)}")
             with Image.open(path).convert('RGB') as img:
                 max_size = 1600
                 if img.width > max_size or img.height > max_size:
@@ -178,11 +179,13 @@ def prepare_web_output(all_face_data, cluster_labels, output_dir_abs):
                 unclustered.append(filename)
 
     # --- Process Clustered Faces ---
+    app.logger.info("--- Processing clustered people ---")
     for label_id, faces_in_cluster in label_to_faces.items():
         if label_id == -1:
             continue
 
         person_id = f"Person_{label_id + 1}"
+        app.logger.info(f"Processing {person_id}...")
         people[person_id] = {'images': [], 'thumbnail': None}
         
         # Group faces for this person by their original image path
@@ -192,6 +195,7 @@ def prepare_web_output(all_face_data, cluster_labels, output_dir_abs):
 
         # Draw boxes for each image associated with this person
         for path, locations in clustered_by_image.items():
+            app.logger.info(f"  Drawing boxes for {person_id} on: {os.path.basename(path)}")
             with Image.open(path).convert('RGB') as img:
                 max_size = 1600
                 if img.width > max_size or img.height > max_size:
@@ -204,10 +208,12 @@ def prepare_web_output(all_face_data, cluster_labels, output_dir_abs):
                 people[person_id]['images'].append(filename)
 
         # Generate a thumbnail for this person using the most suitable face
+        app.logger.info(f"  Generating thumbnail for {person_id}...")
         thumbnail_filename = crop_save_and_get_best_thumbnail(faces_in_cluster, person_id, app.config['THUMBNAIL_FOLDER'])
         if thumbnail_filename:
             people[person_id]['thumbnail'] = thumbnail_filename
             
+    app.logger.info("--- Finished prepare_web_output ---")
     return people, sorted(list(set(unclustered)))
 
 # --- Routes for serving generated files ---
@@ -232,6 +238,7 @@ def run_pipeline_and_yield_progress(eps_value):
     formatted progress updates.
     """
     global processed_data_for_web
+    clear_output_data() # Clear previous results at the start of a new run.
     
     def sse_message(data):
         """Formats a dictionary into an SSE message string."""
@@ -307,19 +314,28 @@ def run_pipeline_and_yield_progress(eps_value):
 
         # 3. Face Clustering
         yield sse_message({"message": f"Found {len(all_face_data)} faces. Now clustering..."})
-        cluster_labels = cluster_faces(all_face_data, eps=eps_value)
+        # Use the 'cosine' distance metric, which is appropriate for ArcFace embeddings.
+        cluster_labels = cluster_faces(all_face_data, eps=eps_value, metric='cosine')
 
         # 4. Prepare output for web
         yield sse_message({"message": "Organizing results and generating thumbnails..."})
         people, unclustered = prepare_web_output(all_face_data, cluster_labels, output_dir_abs_path)
         
+        app.logger.info("DEBUG: Returned from prepare_web_output. Preparing final data structure.")
         processed_data_for_web = {
             'people': people,
             'unclustered': unclustered,
             'eps_used': eps_value
         }
+        app.logger.info("DEBUG: Assigned to global var. Deleting large data objects.")
+        
+        # Explicitly delete large objects to see if crash is related to garbage collection
+        del all_face_data
+        del cluster_labels
 
+        app.logger.info("DEBUG: Large objects deleted. Yielding final message.")
         yield sse_message({"message": "Analysis complete!", "progress": 100, "status": "complete"})
+        app.logger.info("DEBUG: Final message yielded. Pipeline function is now complete.")
 
     except Exception as e:
         app.logger.error(f"An error occurred in the pipeline: {e}", exc_info=True)
@@ -330,6 +346,7 @@ def run_pipeline_and_yield_progress(eps_value):
 
 @app.route('/', methods=['GET'])
 def index():
+    app.logger.info(f"--- [DEBUG] Rendering index page. Data: {processed_data_for_web} ---")
     people = processed_data_for_web.get('people', {})
     unclustered = processed_data_for_web.get('unclustered', [])
     
@@ -361,11 +378,16 @@ def upload_file():
         flash('No selected file')
         return redirect(request.url)
     if file and file.filename.endswith('.zip'):
-        clear_all_data()
+        # Before saving the new file, clear out any old files in the upload directory
+        # to ensure we're starting fresh.
+        upload_folder = app.config['UPLOAD_FOLDER']
+        if os.path.exists(upload_folder):
+            shutil.rmtree(upload_folder)
+        os.makedirs(upload_folder)
         
         # Save the zip file to a predictable, fixed location.
         filename = "input.zip" 
-        zip_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        zip_path = os.path.join(upload_folder, filename)
         file.save(zip_path)
         
         # We no longer need the session. The processing stream will find the file.

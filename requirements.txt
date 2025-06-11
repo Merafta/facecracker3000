@@ -4,4 +4,5 @@ scikit-learn
 Pillow
 gunicorn
 deepface
-tf-keras 
+tf-keras==2.15.1
+pillow-heif 

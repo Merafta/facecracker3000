@@ -60,11 +60,10 @@
 
         .person-section { margin-bottom: 30px; border-bottom: 1px solid #e9ecef; padding-bottom: 20px; }
         
-        /* New styles for the person header */
         .person-header {
             display: flex;
             align-items: center;
-            gap: 20px; /* Space between thumbnail and name */
+            gap: 20px;
             margin-bottom: 20px;
         }
         .person-thumbnail {
@@ -79,7 +78,7 @@
             color: var(--dark-text); 
             font-size: 1.5em;
             font-weight: 700;
-            margin: 0; /* Remove default margin to align nicely */
+            margin: 0;
         }
 
         .image-gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 15px; }
@@ -158,40 +157,8 @@
             border-color: #0a58ca;
         }
 
-        #loader-overlay {
-            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background-color: rgba(255, 255, 255, 0.8);
-            backdrop-filter: blur(4px);
-            display: none; justify-content: center; align-items: center;
-            z-index: 1000; flex-direction: column;
-        }
-        .spinner {
-            border: 8px solid #e9ecef;
-            border-top: 8px solid var(--primary-blue);
-            border-radius: 50%; width: 60px; height: 60px;
-            animation: spin 1s linear infinite;
-        }
-        #loader-overlay p { margin-top: 20px; font-size: 1.2em; color: var(--dark-text); }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        
-        .progress-bar-container { width: 80%; max-width: 400px; background-color: #e9ecef; border-radius: 4px; margin-top: 10px; border: 1px solid var(--border-color); }
+        .progress-bar-container { width: 80%; max-width: 400px; background-color: #e9ecef; border-radius: 4px; margin: 10px auto; border: 1px solid var(--border-color); }
         .progress-bar { width: 0%; height: 20px; background-color: var(--primary-blue); text-align: center; line-height: 20px; color: white; border-radius: 4px; transition: width 0.4s ease; }
-
-        /* New subtitle style */
-        .mode-subtitle {
-            text-align: center;
-            margin-top: 0;
-            margin-bottom: 40px;
-            font-style: italic;
-            color: #6c757d; /* A muted grey color */
-        }
-
-        .subtitle {
-            font-size: 1.1rem;
-            color: #888;
-            margin-bottom: 2rem;
-            text-align: center;
-        }
 
         .upload-form { display: flex; flex-direction: column; align-items: center; gap: 15px; }
         .form-control-group { display: flex; flex-direction: column; align-items: center; text-align: center;}
@@ -199,39 +166,42 @@
         .form-control { padding: 8px 12px; border: 1px solid #ced4da; border-radius: 4px; }
         .form-helper-text { color: #6c757d; margin-top: 5px; font-size: 0.9rem; }
 
-        /* THE FIX: Add styles to control the size of the result images */
         .gallery-image { 
-            width: 100%; /* Make image fill the grid column */
-            height: 250px; /* Give a fixed height for uniformity */
-            object-fit: cover; /* Crop image to fit without distortion */
+            width: 100%;
+            height: 250px;
+            object-fit: cover;
             border-radius: 4px; 
             box-shadow: 0 2px 4px rgba(0,0,0,0.1); 
-            background-color: #e9ecef; /* Add a placeholder color */
+            background-color: #e9ecef;
+        }
+        
+        /* Styles for the new Advanced Settings toggle */
+        .advanced-settings-toggle {
+            margin-top: 15px;
+        }
+
+        .advanced-settings-toggle a {
+            color: var(--primary-blue);
+            text-decoration: none;
+            font-size: 0.9em;
+            cursor: pointer;
+        }
+
+        .advanced-settings-toggle a:hover {
+            text-decoration: underline;
         }
     </style>
 </head>
 <body>
-    <div id="loader-overlay">
-        <div class="spinner"></div>
-        <div style="text-align: center;">
-            <p id="loader-text">Starting...</p>
-            <div class="progress-bar-container">
-                <div id="progress-bar" class="progress-bar">0%</div>
-            </div>
-        </div>
-    </div>
-
     <div class="container">
         <h1>Face cracker 3000</h1>
         
         <!-- Section for Flashed Messages -->
-        {% with messages = get_flashed_messages() %}
+        {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
-                <div class="status-message">
-                    {% for message in messages %}
-                        {{ message }}<br>
-                    {% endfor %}
-                </div>
+                {% for category, message in messages %}
+                    <div class="status-message {{ category }}">{{ message }}</div>
+                {% endfor %}
             {% endif %}
         {% endwith %}
 
@@ -240,128 +210,157 @@
             <h2>Upload a Zip File of Photos</h2>
             <form id="upload-form" method="post" enctype="multipart/form-data" action="{{ url_for('upload_file') }}" class="upload-form">
                 <div class="form-control-group">
-                    <label for="zipfile" class="form-label">Upload a .zip file with photos:</label>
+                    <label for="zipfile" class="form-label">Select a .zip file:</label>
                     <input type="file" name="zipfile" id="zipfile" accept=".zip" class="form-control" required>
                 </div>
-
-                <!-- Container for the toggle link -->
-                <div style="text-align: center; margin: 10px 0;">
-                    <a href="#" id="toggle-advanced" style="font-size: 0.9rem; color: #007bff; text-decoration: none;">Show Advanced Settings</a>
-                </div>
                 
-                <!-- This container is hidden by default -->
-                <div id="advanced-settings-container" style="display: none; width: 100%;">
+                <button type="submit">Start Analysis</button>
+
+                <div class="advanced-settings-toggle">
+                    <a id="toggle-advanced">Advanced settings</a>
+                </div>
+
+                <!-- Container for the advanced options, hidden by default -->
+                <div id="advanced-settings-container" style="display: none; width: 100%; margin-top: 15px; padding-top: 15px; border-top: 1px solid var(--border-color);">
                     <div class="form-control-group">
-                        <label for="eps_value" class="form-label">Clustering Strictness (eps):</label>
-                        <input type="number" name="eps_value" id="eps_value" value="{{ eps_value | float }}" min="0.1" max="1.0" step="0.01" class="form-control">
-                        <small class="form-helper-text">Lower = stricter (faces must be more similar). Higher = more lenient. Try 0.3 to 0.5.</small>
+                        <label for="eps-slider" class="form-label">Clustering Sensitivity (Epsilon)</label>
+                        <input type="range" id="eps-slider" name="eps" min="0.1" max="1.0" step="0.05" value="{{ eps_value | default(0.5, true) }}" class="form-control">
+                        <span id="eps-value-display">{{ eps_value | default(0.5, true) }}</span>
+                        <small class="form-helper-text">Lower values require faces to be more similar to be grouped.</small>
                     </div>
                 </div>
-                
-                <button type="submit" class="btn-primary">Analyze Faces</button>
             </form>
+            
+            <!-- Upload Progress Bar -->
+            <div id="upload-progress-container" style="display: none; margin-top: 20px;">
+                <p>Uploading file...</p>
+                <div class="progress-bar-container">
+                    <div id="upload-progress-bar" class="progress-bar" style="width: 0%;">0%</div>
+                </div>
+            </div>
         </div>
 
-        <hr style="margin: 30px 0;">
-
-        <h2>Results</h2>
-
-        {% if data is none and not error_message %}
+        <!-- Status Message (for no results yet) -->
+        {% if not people and not unclustered_images %}
             <div class="status-message">
-                Please upload a zip file to begin processing.
+                <p>No analysis has been run yet. Please upload a zip file to begin.</p>
             </div>
         {% endif %}
 
-        {% if error_message %}
-            <p class="error">{{ error_message }}</p>
-        {% elif data %}
-            {% if data.get("ran_processing") %}
-                 <div class="status-message">Showing results from the last upload.</div>
-            {% endif %}
-
-            {% if data.people %}
+        <!-- Results Section -->
+        <div id="results-section">
+            {% if people %}
                 <h2>Identified People</h2>
-                {% for person_id, person_data in data.people.items() %}
-                <div class="person-card">
-                    <div class="person-header">
-                        <h3>{{ person_id }}</h3>
-                        <img src="{{ url_for('static', filename='thumbnails/' + person_data.thumbnail) }}" alt="{{ person_id }} thumbnail" class="person-thumbnail">
+                {% for person_id, person_data in people.items() %}
+                    <div class="person-section">
+                        <div class="person-header">
+                            {% if person_data.thumbnail %}
+                                <img src="{{ person_data.thumbnail }}" alt="Thumbnail for {{ person_id }}" class="person-thumbnail">
+                            {% endif %}
+                            <h3>{{ person_id }}</h3>
+                        </div>
+                        <div class="image-gallery">
+                            {% for image_url in person_data.images %}
+                                <div class="image-item">
+                                    <a href="{{ image_url }}" target="_blank">
+                                        <img src="{{ image_url }}" alt="Photo of {{ person_id }}" class="gallery-image">
+                                    </a>
+                                </div>
+                            {% endfor %}
+                        </div>
                     </div>
-                    <div class="image-gallery">
-                        {% for image_file in person_data.images %}
-                            <img src="{{ url_for('static', filename='processed/' + image_file) }}" alt="Photo of {{ person_id }}" class="gallery-image">
-                        {% endfor %}
-                    </div>
-                </div>
                 {% endfor %}
-            {% else %}
-                 <div class="status-message">No unique people were identified from the clustering after processing.</div>
             {% endif %}
 
-            {% if data.unclustered %}
-                <h2>Images with Unclustered Faces (Noise Points)</h2>
-                 <div class="image-gallery">
-                    {% for img_info in data.unclustered %}
-                         <div class="image-item">
-                            <img src="{{ url_for('serve_processed_image', filename=img_info.processed_filename) }}" alt="Unclustered face in {{ img_info.original_filename }}">
-                            <p>Original: {{ img_info.original_filename }}</p>
+            {% if unclustered_images %}
+                <h2>Unclustered Faces</h2>
+                <div class="image-gallery">
+                    {% for image_url in unclustered_images %}
+                        <div class="image-item">
+                             <a href="{{ image_url }}" target="_blank">
+                                <img src="{{ image_url }}" alt="Unclustered face" class="gallery-image">
+                            </a>
                         </div>
                     {% endfor %}
                 </div>
-            {% elif data.people and not data.unclustered %}
-                 <div class="status-message">No unclustered (noise) faces found among the processed images.</div>
-            {% elif not data.people and not data.unclustered and data.get("ran_processing") %}
-                 <div class="status-message">No faces suitable for clustering were found or processed.</div>
             {% endif %}
-
-            {% if data.unclustered_images %}
-            <div class="unclustered-section">
-                <h4>Unclustered Faces</h4>
-                <p>These images contain faces that did not match any of the main groups. A yellow box is drawn around them.</p>
-                <div class="image-gallery">
-                    {% for image_file in data.unclustered_images %}
-                        <img src="{{ url_for('static', filename='processed/' + image_file) }}" alt="Unclustered face" class="gallery-image">
-                    {% endfor %}
-                </div>
-            </div>
-            {% endif %}
-
-            <!-- THE FIX: Add new section for images with no faces -->
-            {% if data.images_with_no_faces %}
-            <div class="unclustered-section"> <!-- Reusing styles from unclustered section -->
-                <h4>Images with No Faces Detected</h4>
-                <p>The following images were processed, but no faces could be reliably detected in them.</p>
-                <ul>
-                    {% for filename in data.images_with_no_faces %}
-                        <li>{{ filename }}</li>
-                    {% endfor %}
-                </ul>
-            </div>
-            {% endif %}
-
-        {% else %}
-            <!-- This part is now handled by the specific message above for 'data is none' -->
-        {% endif %}
+        </div>
     </div>
 
     <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            const toggleLink = document.getElementById('toggle-advanced');
-            const advancedContainer = document.getElementById('advanced-settings-container');
+        document.addEventListener("DOMContentLoaded", function() {
+            const uploadForm = document.getElementById('upload-form');
+            const zipFileInput = document.getElementById('zipfile');
+            const submitButton = uploadForm.querySelector('button[type="submit"]');
 
-            if (toggleLink && advancedContainer) {
-                toggleLink.addEventListener('click', function(event) {
-                    event.preventDefault();
-                    if (advancedContainer.style.display === 'none') {
-                        advancedContainer.style.display = 'block';
-                        toggleLink.textContent = 'Hide Advanced Settings';
-                    } else {
-                        advancedContainer.style.display = 'none';
-                        toggleLink.textContent = 'Show Advanced Settings';
+            const uploadProgressContainer = document.getElementById('upload-progress-container');
+            const uploadProgressBar = document.getElementById('upload-progress-bar');
+            
+            const epsSlider = document.getElementById('eps-slider');
+            const epsValueDisplay = document.getElementById('eps-value-display');
+            
+            const toggleAdvancedButton = document.getElementById('toggle-advanced');
+            const advancedSettingsContainer = document.getElementById('advanced-settings-container');
+
+            // Toggle visibility of advanced settings
+            toggleAdvancedButton.addEventListener('click', function(e) {
+                e.preventDefault();
+                const isHidden = advancedSettingsContainer.style.display === 'none';
+                advancedSettingsContainer.style.display = isHidden ? 'block' : 'none';
+            });
+
+            // Update the display when the slider is moved
+            epsSlider.addEventListener('input', function() {
+                epsValueDisplay.textContent = this.value;
+            });
+
+            uploadForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+
+                if (!zipFileInput.files || zipFileInput.files.length === 0) {
+                    alert('Please select a zip file first.');
+                    return;
+                }
+
+                submitButton.disabled = true;
+                submitButton.textContent = 'Uploading...';
+                uploadProgressContainer.style.display = 'block';
+
+                const formData = new FormData(uploadForm);
+                const xhr = new XMLHttpRequest();
+
+                xhr.open('POST', uploadForm.action, true);
+
+                xhr.upload.onprogress = function(event) {
+                    if (event.lengthComputable) {
+                        const percentComplete = Math.round((event.loaded / event.total) * 100);
+                        uploadProgressBar.style.width = percentComplete + '%';
+                        uploadProgressBar.textContent = percentComplete + '%';
                     }
-                });
-            }
+                };
+
+                xhr.onload = function() {
+                    if (xhr.status >= 200 && xhr.status < 400) {
+                        const epsValue = epsSlider.value;
+                        window.location.href = `/processing?eps=${epsValue}`;
+                    } else {
+                        alert('Upload failed. Server responded with an error.');
+                        submitButton.disabled = false;
+                        submitButton.textContent = 'Start Analysis';
+                        uploadProgressContainer.style.display = 'none';
+                    }
+                };
+
+                xhr.onerror = function() {
+                    alert('An error occurred during the upload. Please check your network connection.');
+                    submitButton.disabled = false;
+                    submitButton.textContent = 'Start Analysis';
+                    uploadProgressContainer.style.display = 'none';
+                };
+
+                xhr.send(formData);
+            });
         });
     </script>
 </body>
-</html> 
+</html>
