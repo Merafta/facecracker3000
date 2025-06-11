@@ -25,6 +25,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the application's code into the container
 COPY . .
 
+# --- ADD THESE THREE LINES ---
+# Make the setup script executable
+RUN chmod +x ./setup.sh
+
+# Run the setup script to pre-download models. This runs only once during the build.
+RUN ./setup.sh
+# -----------------------------
+
 # Tell the container to expose port 7860 (the default for Hugging Face Spaces)
 EXPOSE 7860
 
